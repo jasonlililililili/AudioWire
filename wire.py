@@ -1,6 +1,7 @@
 import pyaudio
 import numpy
-CHUNK = 1024
+CHUNK = 4096
+FRAME_PER_BUFFER = 2048
 FORMAT = pyaudio.paInt16
 CHANNELS = 2
 RATE = 44100
@@ -46,14 +47,14 @@ try:
     bose_progress = 0    # use it directly, update it by +4*CHUNK
     ewa_progress = 0    # use it directly, update it by +4*CHUNK
 
-    print(jbl_device_id, bose_device_id, ewa_device_id)
+    # print(jbl_device_id, bose_device_id, ewa_device_id)
 
     
     for i in range(p.get_device_count()):
         dev = p.get_device_info_by_index(i)
         if ( 'Line 1' in dev['name'] and dev['hostApi'] == 0 and dev['maxInputChannels'] > 0):
             mix = dev['index']
-            print('dev_index', mix)
+            # print('dev_index', mix)
 
     wire1 = p.open(format=FORMAT,
                     channels=CHANNELS,
@@ -63,41 +64,55 @@ try:
                     frames_per_buffer=CHUNK)
     
     def jbl_callback(in_data, frame_count, time_info, status):
-        global jbl_progress, jbl_latency, datashift
+        global jbl_progress, jbl_latency, datashift, print
         if jbl_latency > 0:
             jbl_latency -= (frame_count/RATE)
             return (bytes(bytearray(frame_count*4)), pyaudio.paContinue)
-        data = databuffer[jbl_progress-datashift:jbl_progress+4*frame_count-datashift]
+        index_to = jbl_progress - datashift
+        # print("jbl_index_to: ", index_to)
+        if index_to < 0:
+            print("jbl: ", datashift, jbl_progress)
+        data = databuffer[index_to:index_to+4*frame_count]
         data = audio_datalist_set_volume(data, jbl_volume)
         jbl_progress += 4*frame_count
         return (data, pyaudio.paContinue)
             
 
     def bose_callback(in_data, frame_count, time_info, status):
-        global bose_progress, bose_latency, datashift
+        global bose_progress, bose_latency, datashift, print
         if bose_latency > 0:
             bose_latency -= (frame_count/RATE)
             return (bytes(bytearray(frame_count*4)), pyaudio.paContinue)
+        index_to = bose_progress - datashift
+        # print("bose_index_to: ", index_to)
+        if index_to < 0:
+            print("bose: ", datashift, bose_progress)
         data = databuffer[bose_progress-datashift:bose_progress+4*frame_count-datashift]
         data = audio_datalist_set_volume(data, bose_volume)
         bose_progress += 4*frame_count
         return (data, pyaudio.paContinue)
     
     def ewa_callback(in_data, frame_count, time_info, status):
-        global ewa_progress, ewa_latency, datashift
+        global ewa_progress, ewa_latency, datashift, print
         if ewa_latency > 0:
             ewa_latency -= (frame_count/RATE)
             return (bytes(bytearray(frame_count*4)), pyaudio.paContinue)
+        index_to = ewa_progress - datashift
+        # print("ewa_index_to: ", index_to)
+        if index_to < 0:
+            print("ewa: ", datashift, ewa_progress)
         data = databuffer[ewa_progress-datashift:ewa_progress+4*frame_count-datashift]
         data = audio_datalist_set_volume(data, ewa_volume)
         ewa_progress += 4*frame_count
         return (data, pyaudio.paContinue)
-    
+    databuffer.extend(wire1.read(CHUNK))
+
     bose = p.open(format=FORMAT,
                 channels=CHANNELS,
                 rate=RATE,
                 output=True,
                 output_device_index=bose_device_id,
+                frames_per_buffer=FRAME_PER_BUFFER,
                 stream_callback=bose_callback)
     
     jbl = p.open(format=FORMAT,
@@ -105,6 +120,7 @@ try:
                     rate=RATE,
                     output=True,
                     output_device_index=jbl_device_id,
+                    frames_per_buffer=FRAME_PER_BUFFER,
                     stream_callback=jbl_callback)
     
     ewa = p.open(format=FORMAT,
@@ -112,15 +128,16 @@ try:
                     rate=RATE,
                     output=True,
                     output_device_index=ewa_device_id,
+                    frames_per_buffer=FRAME_PER_BUFFER,
                     stream_callback=ewa_callback)
 
     while True:
         databuffer.extend(wire1.read(CHUNK))
-        print(len(databuffer))
-        if len(databuffer) > latency_buffer_length:
-            move = min(bose_progress, jbl_progress, ewa_progress) - datashift
-            datashift = min(bose_progress, jbl_progress, ewa_progress)
+        # print(len(databuffer))
+        if len(databuffer) > RATE * 4 * 3:
+            move = int(min(bose_progress, jbl_progress, ewa_progress) - datashift)
             databuffer = databuffer[move:]
+            datashift = int(min(bose_progress, jbl_progress, ewa_progress))
 
 
 except:
